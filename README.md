@@ -1,0 +1,1 @@
+This repo contains a python script that reads a schedule from a pdf and then adds the times to a google calendar
