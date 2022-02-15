@@ -1,13 +1,16 @@
 #!/usr/in/env python3
+import logging
 import textract
 import os.path
 import yaml
-import datetime
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from pathlib import Path
+from datetime import date, datetime, time
+
+WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
 
 class day:
@@ -22,7 +25,7 @@ class week:
         self.weekNumber = weekNumber
         self.days = []
 
-    def addWeekDay(self, day):
+    def add_week_day(self, day):
         # Add a day object to the end of the list of days
         self.days.append(day)
 
@@ -31,9 +34,17 @@ class pdfParser:
     def __init__(self, pdfFile, firstWeekNumber):
         self._pdfFile = pdfFile
         self._firstWeekNumber = firstWeekNumber
-        self.WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"]
 
-    def parsePdf(self):
+    def parse_pdf(self):
+        """
+        # parse_pdf
+
+        Parses a pdf containing a schedule. Currently only supports the
+        format used by Kungälv municipal
+
+        Returns a list called schedule
+
+        """
         schedule = []
         # Read text from the supplied PDF
         rawText = textract.process(self._pdfFile)
@@ -58,7 +69,11 @@ class pdfParser:
                     weekdayNumber = line_num - firstLineWithTimes
                     # Add a new day to the last week in the schedule
                     schedule[-1].addWeekDay(
-                        day(self.WEEKDAYS[weekdayNumber], dayTimes[0], dayTimes[1])
+                        day(
+                            WEEKDAYS[weekdayNumber],
+                            time.fromisoformat(dayTimes[0]),
+                            time.fromisoformat(dayTimes[1]),
+                        )
                     )
                 continue
             if "Tid 1" in line:
@@ -71,32 +86,45 @@ class pdfParser:
                 weekCounter += 1
         return schedule
 
-    def prettyPrintWeeks(self, schedule):
+    def pretty_print_weeks(self, schedule):
         """
-        # prettyPrintWeeks
+        # pretty_print_weeks
 
         Function that takes in a schedule and prints it in a readable way
 
         """
         for weekObj in schedule:
-            print("\n------------- WEEK {} -------------".format(weekObj.weekNumber))
-            print("|  Weekday  | StartTime | EndTime |")
-            print("|---------------------------------|")
+            logging.info(
+                "------------- WEEK {} -------------".format(weekObj.weekNumber)
+            )
+            logging.info("|  Weekday  | StartTime | EndTime |")
+            logging.info("|---------------------------------|")
             for dayObj in weekObj.days:
                 pprWeekday = "| " + dayObj.weekday + " " * (10 - len(dayObj.weekday))
-                pprStartTime = "|   {}   ".format(dayObj.startTime)
-                pprEndTime = "|  {}  |".format(dayObj.endTime)
-                print(pprWeekday + pprStartTime + pprEndTime)
-            print("-----------------------------------")
+                pprStartTime = "|   {}   ".format(
+                    dayObj.startTime.isoformat(timespec="minutes")
+                )
+                pprEndTime = "|  {}  |".format(
+                    dayObj.endTime.isoformat(timespec="minutes")
+                )
+                logging.info(pprWeekday + pprStartTime + pprEndTime)
+            logging.info("-----------------------------------")
 
 
 class googleCalendarApi:
-    def __init__(self) -> None:
+    def __init__(self, schedule) -> None:
         self.get_settings()
         # If modifying these scopes, delete the file token.json.
         self.SCOPES = [self.settings["googleCalendarLink"]]
+        self.schedule = schedule
 
     def connect(self):
+        """
+        # connect
+
+        Connects to the Google Calendar API and creates a service
+
+        """
         creds = None
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
@@ -118,8 +146,11 @@ class googleCalendarApi:
         self.service = build("calendar", "v3", credentials=creds)
 
     def get_calendar_details(self):
-        """Shows basic usage of the Google Calendar API.
-        Prints the start and name of the next 10 events on the user's calendar.
+        """
+        # get_calendar_details
+
+        Prints details of the calendar specified by the calendarId in settings.yaml
+
         """
         # Get details for the calendar
         calendar_details = (
@@ -127,57 +158,156 @@ class googleCalendarApi:
             .get(calendarId=self.settings["calendarId"])
             .execute()
         )
-        print("Summary: {}".format(calendar_details["summary"]))
-        print("Description: {}".format(calendar_details["description"]))
+        logging.info("Summary: {}".format(calendar_details["summary"]))
+        logging.info("Description: {}".format(calendar_details["description"]))
 
     def write_to_calendar(self):
-        """Shows basic usage of the Google Calendar API.
-        Prints the start and name of the next 10 events on the user's calendar.
         """
-        # TODO: Add code for writing to google calendar
-        # Call the Calendar API
-        now = datetime.datetime.utcnow().isoformat() + "Z"  # 'Z' indicates UTC time
+        # write_to_calendar
 
-        print("Getting the upcoming 10 events")
-        events_result = (
-            self.service.events()
-            .list(
-                calendarId=self.settings["calendarId"],
-                timeMin=now,
-                maxResults=10,
-                singleEvents=True,
-                orderBy="startTime",
+        Loops through the weeks in the schedule list and adds all future events
+        to the calendar.
+
+        googleCalendarApi.connect must have been run first.
+
+        """
+        today = date.today()
+        currentYear = today.year
+        currentWeek = today.isocalendar().week
+
+        # Loop through the weeks
+        for weekObj in self.schedule:
+            if weekObj.weekNumber < currentWeek:
+                logging.info(
+                    'Schedule week "{}" occurs in the past. Skipping it'.format(
+                        weekObj.weekNumber
+                    )
+                )
+                continue
+            logging.info(
+                'Adding schedule week "{}" to calendar'.format(weekObj.weekNumber)
             )
-            .execute()
-        )
-        events = events_result.get("items", [])
-
-        if not events:
-            print("No upcoming events found.")
-        for event in events:
-            start = event["start"].get("dateTime", event["start"].get("date"))
-            print(start, event["summary"])
+            for dayObj in weekObj.days:
+                dateOfWeekDay = date.fromisocalendar(
+                    currentYear, weekObj.weekNumber, WEEKDAYS.index(dayObj.weekday) + 1
+                )  # (year, week, day of week)
+                if dateOfWeekDay < today:
+                    logging.info(
+                        'Schedule day "{}" occurs in the past. Skipping it'.format(
+                            dateOfWeekDay
+                        )
+                    )
+                    continue
+                if (
+                    "pickUpDropOff" in self.settings
+                    and dayObj.weekday in self.settings["pickUpDropOff"]
+                ):
+                    description, attendees = self.get_pickUpDropOff_info(
+                        self.settings["pickUpDropOff"][dayObj.weekday],
+                        weekObj.weekNumber,
+                    )
+                logging.info("Adding event:")
+                logging.info(" -> Date: {} - {}".format(dateOfWeekDay, dayObj.weekday))
+                logging.info(" -> Time: {}-{}".format(dayObj.startTime, dayObj.endTime))
+                logging.info(" -> Event info: {}".format(repr(description)))
+                start = datetime.combine(dateOfWeekDay, dayObj.startTime).isoformat()
+                end = datetime.combine(dateOfWeekDay, dayObj.endTime).isoformat()
+                self.create_event(start, end, description, attendees)
+            logging.info("-----------------------------------")
 
     def get_settings(self):
         """
         # get_settings
 
         Function that returns a dict with settings read from a yaml-file
+
         """
         full_file_path = Path(__file__).parent.joinpath("settings.yaml")
         with open(full_file_path) as settings:
             self.settings = yaml.load(settings, Loader=yaml.Loader)
 
+    def create_event(self, start, end, description, attendees):
+        """
+        # create_event
+
+        Creates an event in the Calendar.
+        Required inputs are: start, end, description, attendees
+
+        """
+        event_result = (
+            self.service.events()
+            .insert(
+                calendarId=self.settings["calendarId"],
+                body={
+                    "summary": "Förskola",
+                    "description": description,
+                    "start": {
+                        "dateTime": start,
+                        "timeZone": "Europe/Stockholm",
+                    },
+                    "end": {"dateTime": end, "timeZone": "Europe/Stockholm"},
+                    "attendees": attendees,
+                },
+            )
+            .execute()
+        )
+        logging.debug("Created event:")
+        logging.debug(" - id: {}".format(event_result["id"]))
+        logging.debug(" - summary: {}".format(event_result["summary"]))
+        logging.debug(" - starts at: {}".format(event_result["start"]["dateTime"]))
+        logging.debug(" - ends at: {}".format(event_result["end"]["dateTime"]))
+        logging.debug(" - description: {}".format(repr(event_result["description"])))
+        if "attendees" in event_result:
+            logging.debug(" - attendees: {}".format(event_result["attendees"]))
+
+    @staticmethod
+    def get_pickUpDropOff_info(pickUpDropOffInfo, weekNumber):
+        """
+        # get_pickUpDropOff_info
+
+        Extracts info from the pickUpDropOff-dictionary (specified in settings.yaml)
+        Used for adding description and/or attendees to an event
+
+        """
+        info = ""
+        attendees = []
+        for rule in pickUpDropOffInfo:
+            if "attendees" in rule:
+                attendees = rule["attendees"]
+            if not "weeks" in rule:
+                logging.warn("Unsupported pickUpDropOff-rule: {}".format(rule))
+                continue
+            if rule["weeks"] == "all":
+                info = rule["info"]
+                break
+            elif rule["weeks"] == "even":
+                if weekNumber % 2 == 0:
+                    info = rule["info"]
+                    break
+            elif rule["weeks"] == "odd":
+                if weekNumber % 2 == 1:
+                    info = rule["info"]
+                    break
+            else:
+                logging.warn(
+                    "Unsupported weeks format in pickUpDropOff-rule: {}".format(
+                        rule["weeks"]
+                    )
+                )
+                continue
+        return info, attendees
+
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(message)s")
     parser = pdfParser(pdfFile="Nytt schema.pdf", firstWeekNumber=5)
-    print("=========== Parsing pdf ===========")
-    schedule = parser.parsePdf()
-    print("\nSchedule parsed from pdf:")
-    parser.prettyPrintWeeks(schedule)
-    print("\n=========== Connecting to Google Calendar ===========")
-    googleCalApi = googleCalendarApi()
+    logging.info("=========== Parsing pdf ===========")
+    schedule = parser.parse_pdf()
+    logging.info("Schedule parsed from pdf:")
+    parser.pretty_print_weeks(schedule)
+    logging.info("=========== Connecting to Google Calendar ===========")
+    googleCalApi = googleCalendarApi(schedule)
     googleCalApi.connect()
     googleCalApi.get_calendar_details()
-    print("\n=========== Writing schedule to Google Calendar ===========")
+    logging.info("=========== Writing schedule to Google Calendar ===========")
     googleCalApi.write_to_calendar()
