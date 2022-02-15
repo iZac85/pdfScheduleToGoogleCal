@@ -22,7 +22,7 @@ A rule could for example be:
 "weeks" could contain the values "all", "even" or "odd". The key "attendees" could also be included in the rule, the value of that should then be a list of dictionarys each containg the key "email" and the attendees email as a value. The attendees would then be invited to the event.
 A full example:
 
-    {
+    pickUpDropOff: {
      "Monday": [{"weeks": "all","info": "Anna drops off\nAnders picks up"}],
      "Tuesday": [{"weeks": "all","info": "Anders drops off\Anna picks up"}],
      "Thursday": [{"weeks": "odd","info": "Anders drops off\Anna picks up"},
