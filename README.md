@@ -1,4 +1,5 @@
-This repo contains a python script that reads a schedule from a pdf and then adds the times to a google calendar.
+# pdfScheduleToGoogleCalendar
+**pdfScheduleToGoogleCalendar** is a python script that reads a schedule from a pdf and then adds the times to a google calendar.
 
 Currently supports the pdf schedule format used by Kungälv municipal (might work for other Swedish municipals as well).
 The pdf needs to have a format like this:

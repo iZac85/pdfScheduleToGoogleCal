@@ -3,6 +3,7 @@ import logging
 import textract
 import os.path
 import yaml
+import re
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
@@ -55,27 +56,6 @@ class pdfParser:
         weekCounter = 0
         # Loop through the lines from the parsed pdf
         for line_num, line in enumerate(lines):
-            if nextLineIsTime:
-                if line == "":
-                    # TODO: This will not work if there is an empty day in the
-                    # middle of the week
-                    # '' marks the end of a set of daily start and end times
-                    nextLineIsTime = False
-                else:
-                    # Parse the start and end times from the line
-                    dayTimes = line.split(" - ")
-                    # The list of times always go from Monday -> Friday, so the
-                    # first parsed line is for Monday, the next for Tuesday etc
-                    weekdayNumber = line_num - firstLineWithTimes
-                    # Add a new day to the last week in the schedule
-                    schedule[-1].addWeekDay(
-                        day(
-                            WEEKDAYS[weekdayNumber],
-                            time.fromisoformat(dayTimes[0]),
-                            time.fromisoformat(dayTimes[1]),
-                        )
-                    )
-                continue
             if "Tid 1" in line:
                 # Tid 1 marks the last row before a set of daily start and end
                 # times for a new week
@@ -84,6 +64,36 @@ class pdfParser:
                 # Add a new week to the schedule and give it a week number
                 schedule.append(week(self._firstWeekNumber + weekCounter))
                 weekCounter += 1
+                weekdayNumber = 0
+                continue
+            if nextLineIsTime:
+                # Look for lines with timestamps
+                if re.search('(\d\d:\d\d - \d\d:\d\d)', line):
+                    # Parse the start and end times from the line
+                    dayTimes = line.split(" - ")
+                    # Add a new day to the last week in the schedule
+                    schedule[-1].add_week_day(
+                        day(
+                            WEEKDAYS[weekdayNumber],
+                            time.fromisoformat(dayTimes[0]),
+                            time.fromisoformat(dayTimes[1]),
+                        )
+                    )
+                    weekdayNumber += 1
+                elif line == '-':
+                    # To handle empty days within a week, the pdf needs to be 
+                    # edited with dashes for empty days.
+                    # Thus '-' means increase the day counter by one
+                    weekdayNumber += 1
+                elif line == "" or not schedule[-1].days:
+                    if not schedule[-1].days:
+                        # If no days have been added, the empty line is NOT the
+                        # end of the week schedule. Continue looking until 
+                        # start- and end-times are found (or "Tid 1" is found)
+                        continue
+                    else:           
+                        # '' marks the end of a set of daily start and end times
+                        nextLineIsTime = False
         return schedule
 
     def pretty_print_weeks(self, schedule):
@@ -299,8 +309,8 @@ class googleCalendarApi:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG, format="%(levelname)s:%(message)s")
-    parser = pdfParser(pdfFile="Nytt schema.pdf", firstWeekNumber=5)
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
+    parser = pdfParser(pdfFile="Nytt schema_edited.pdf", firstWeekNumber=9)
     logging.info("=========== Parsing pdf ===========")
     schedule = parser.parse_pdf()
     logging.info("Schedule parsed from pdf:")
