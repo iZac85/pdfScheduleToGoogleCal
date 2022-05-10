@@ -51,49 +51,46 @@ class pdfParser:
         rawText = textract.process(self._pdfFile)
         text = rawText.decode("utf-8")
         lines = text.splitlines()
-        nextLineIsTime = False
-        firstLineWithTimes = -1
+        firstLineWithTimesFound = False
         weekCounter = 0
         # Loop through the lines from the parsed pdf
-        for line_num, line in enumerate(lines):
-            if "Tid 1" in line:
-                # Tid 1 marks the last row before a set of daily start and end
-                # times for a new week
-                nextLineIsTime = True
-                firstLineWithTimes = line_num + 1
-                # Add a new week to the schedule and give it a week number
-                schedule.append(week(self._firstWeekNumber + weekCounter))
-                weekCounter += 1
-                weekdayNumber = 0
-                continue
-            if nextLineIsTime:
-                # Look for lines with timestamps
-                if re.search('(\d\d:\d\d - \d\d:\d\d)', line):
-                    # Parse the start and end times from the line
-                    dayTimes = line.split(" - ")
-                    # Add a new day to the last week in the schedule
-                    schedule[-1].add_week_day(
-                        day(
-                            WEEKDAYS[weekdayNumber],
-                            time.fromisoformat(dayTimes[0]),
-                            time.fromisoformat(dayTimes[1]),
-                        )
+        for line in enumerate(lines):
+            # Look for lines with timestamps
+            if re.search("(\d\d:\d\d - \d\d:\d\d)", line):
+                if not firstLineWithTimesFound:
+                    # Tid 1 marks the last row before a set of daily start and end
+                    # times for a new week
+                    firstLineWithTimesFound = True
+                    # Add a new week to the schedule and give it a week number
+                    schedule.append(week(self._firstWeekNumber + weekCounter))
+                    weekCounter += 1
+                    weekdayNumber = 0
+                # Parse the start and end times from the line
+                dayTimes = line.split(" - ")
+                # Add a new day to the last week in the schedule
+                schedule[-1].add_week_day(
+                    day(
+                        WEEKDAYS[weekdayNumber],
+                        time.fromisoformat(dayTimes[0]),
+                        time.fromisoformat(dayTimes[1]),
                     )
-                    weekdayNumber += 1
-                elif line == '-':
-                    # To handle empty days within a week, the pdf needs to be 
-                    # edited with dashes for empty days.
-                    # Thus '-' means increase the day counter by one
-                    weekdayNumber += 1
-                elif line == "" or not schedule[-1].days:
-                    if not schedule[-1].days:
-                        # If no days have been added, the empty line is NOT the
-                        # end of the week schedule. Continue looking until 
-                        # start- and end-times are found (or "Tid 1" is found)
-                        continue
-                    else:           
+                )
+                weekdayNumber += 1
+            elif line == "-":
+                # To handle empty days within a week, the pdf needs to be
+                # edited with dashes for empty days.
+                # Thus '-' means increase the day counter by one
+                weekdayNumber += 1
+            elif line == "":
+                if schedule != [] and not schedule[-1].days:
+                    # If no days have been added, the empty line is NOT the
+                    # end of the week schedule. Continue looking until
+                    # start- and end-times are found
+                    continue
+                else:
+                    if schedule != []:
                         # '' marks the end of a set of daily start and end times
-                        nextLineIsTime = False
+                        firstLineWithTimesFound = False
         return schedule
 
     def pretty_print_weeks(self, schedule):
@@ -310,7 +307,7 @@ class googleCalendarApi:
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
-    parser = pdfParser(pdfFile="Nytt schema_edited.pdf", firstWeekNumber=9)
+    parser = pdfParser(pdfFile="Nytt schema.pdf", firstWeekNumber=19)
     logging.info("=========== Parsing pdf ===========")
     schedule = parser.parse_pdf()
     logging.info("Schedule parsed from pdf:")
